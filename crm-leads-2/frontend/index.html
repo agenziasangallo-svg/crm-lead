@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRM Lead</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .stato-badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:12px; font-weight:600; white-space:nowrap; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<div class="max-w-[1400px] mx-auto p-4">
+
+  <header class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold text-slate-900">CRM Lead</h1>
+    <div class="flex items-center gap-2">
+      <input id="operatoreInput" type="text" placeholder="Il tuo nome (operatore)"
+        class="border rounded-lg px-3 py-1.5 text-sm" />
+      <button id="btnStats" class="bg-slate-800 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-700">Statistiche</button>
+      <button id="btnImport" class="bg-emerald-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-emerald-700">Importa CSV</button>
+      <button id="btnNew" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-blue-700">+ Nuovo lead</button>
+    </div>
+  </header>
+
+  <!-- Filtri -->
+  <div class="bg-white rounded-xl shadow-sm p-3 mb-4 flex flex-wrap gap-2 items-center">
+    <input id="search" type="text" placeholder="Cerca nome, cognome, telefono, email, città..."
+      class="border rounded-lg px-3 py-1.5 text-sm flex-1 min-w-[240px]" />
+    <select id="filtroTipologia" class="border rounded-lg px-2 py-1.5 text-sm"><option value="">Tipologia</option></select>
+    <select id="filtroStato" class="border rounded-lg px-2 py-1.5 text-sm"><option value="">Stato</option></select>
+    <select id="filtroCitta" class="border rounded-lg px-2 py-1.5 text-sm"><option value="">Città</option></select>
+    <select id="filtroOperatore" class="border rounded-lg px-2 py-1.5 text-sm"><option value="">Operatore</option></select>
+    <select id="filtroSorgente" class="border rounded-lg px-2 py-1.5 text-sm"><option value="">Sorgente</option></select>
+    <button id="btnReset" class="text-sm text-slate-500 hover:text-slate-800 px-2">Reset</button>
+  </div>
+
+  <div class="text-sm text-slate-500 mb-2" id="totaleRisultati"></div>
+
+  <!-- Tabella -->
+  <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+        <tr>
+          <th class="text-left px-3 py-2">Nome</th>
+          <th class="text-left px-3 py-2">Cellulare</th>
+          <th class="text-left px-3 py-2">Email</th>
+          <th class="text-left px-3 py-2">Tipologia</th>
+          <th class="text-left px-3 py-2">Città</th>
+          <th class="text-left px-3 py-2">Indirizzo</th>
+          <th class="text-left px-3 py-2">Stato</th>
+          <th class="text-left px-3 py-2">Operatore</th>
+          <th class="text-left px-3 py-2">Creato</th>
+          <th class="text-left px-3 py-2">Recall</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- Paginazione -->
+  <div class="flex items-center justify-between mt-3 text-sm">
+    <div id="pageInfo" class="text-slate-500"></div>
+    <div class="flex gap-2">
+      <button id="btnPrev" class="border rounded-lg px-3 py-1 hover:bg-slate-100">&larr; Precedente</button>
+      <button id="btnNext" class="border rounded-lg px-3 py-1 hover:bg-slate-100">Successiva &rarr;</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- Pannello dettaglio lead -->
+<div id="overlay" class="hidden fixed inset-0 bg-black/30 z-40"></div>
+<div id="panel" class="hidden fixed right-0 top-0 h-full w-full sm:w-[440px] bg-white shadow-2xl z-50 overflow-y-auto">
+  <div class="p-4 border-b flex items-center justify-between sticky top-0 bg-white">
+    <h2 class="font-bold text-lg" id="panelTitle">Lead</h2>
+    <button id="btnClosePanel" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+  </div>
+  <div class="p-4 space-y-3" id="panelBody"></div>
+</div>
+
+<!-- Modal import CSV -->
+<div id="importModal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+  <div class="bg-white rounded-xl p-5 w-[420px] shadow-xl">
+    <h3 class="font-bold mb-3">Importa lead da CSV</h3>
+    <p class="text-xs text-slate-500 mb-3">Colonne riconosciute: Annunci, Nome, Cognome, Cellulare, Email, Tipologia, Esito, Città, Indirizzo, Sorgente, Operatore, Data creazione, Ultima modifica, Data recall.</p>
+    <input type="file" id="csvFile" accept=".csv" class="mb-3 text-sm w-full" />
+    <label class="flex items-center gap-2 text-sm mb-3">
+      <input type="checkbox" id="aggiornaEsistenti" /> Aggiorna i lead già esistenti (match su cellulare/email)
+    </label>
+    <div id="importResult" class="text-sm mb-3"></div>
+    <div class="flex justify-end gap-2">
+      <button id="btnCancelImport" class="px-3 py-1.5 text-sm rounded-lg border">Annulla</button>
+      <button id="btnDoImport" class="px-3 py-1.5 text-sm rounded-lg bg-emerald-600 text-white">Carica</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal statistiche -->
+<div id="statsModal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+  <div class="bg-white rounded-xl p-5 w-[520px] shadow-xl max-h-[80vh] overflow-y-auto">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-bold">Statistiche pipeline</h3>
+      <button id="btnCloseStats" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+    </div>
+    <div id="statsBody" class="text-sm"></div>
+  </div>
+</div>
+
+<script>
+const API = "/api";
+let state = { page: 1, page_size: 50, search: "", tipologia: "", stato: "", citta: "", operatore: "", sorgente: "", pages: 1 };
+let statiDisponibili = [];
+
+const statoColors = {
+  "Incarico di vendita": "bg-emerald-100 text-emerald-800",
+  "Vendita conclusa": "bg-emerald-100 text-emerald-800",
+  "Appuntamento fissato": "bg-blue-100 text-blue-800",
+  "In gestione agenti": "bg-indigo-100 text-indigo-800",
+  "Potential buyer / tenant": "bg-cyan-100 text-cyan-800",
+  "Contattato": "bg-amber-100 text-amber-800",
+  "Pending": "bg-slate-200 text-slate-700",
+  "Nuovo": "bg-slate-200 text-slate-700",
+  "Out of zone": "bg-rose-100 text-rose-700",
+  "Non interessato": "bg-rose-100 text-rose-700",
+  "Non risponde": "bg-orange-100 text-orange-700",
+  "Numero errato": "bg-orange-100 text-orange-700",
+};
+function statoClass(s) { return statoColors[s] || "bg-slate-100 text-slate-700"; }
+
+function getOperatore() {
+  return localStorage.getItem("crm_operatore") || "";
+}
+document.getElementById("operatoreInput").value = getOperatore();
+document.getElementById("operatoreInput").addEventListener("change", (e) => {
+  localStorage.setItem("crm_operatore", e.target.value);
+});
+
+// Se l'app ha il login attivo, precompila il nome operatore con l'utente autenticato
+async function initOperatore() {
+  try {
+    const r = await fetch(`${API}/me`);
+    const d = await r.json();
+    if (d.operatore) {
+      document.getElementById("operatoreInput").value = d.operatore;
+      localStorage.setItem("crm_operatore", d.operatore);
+      document.getElementById("operatoreInput").disabled = true;
+      document.getElementById("operatoreInput").title = "Utente autenticato";
+    }
+  } catch (e) { /* ignora, campo resta libero */ }
+}
+
+async function loadFiltri() {
+  const r = await fetch(`${API}/filtri`);
+  const d = await r.json();
+  fillSelect("filtroCitta", d.citta);
+  fillSelect("filtroOperatore", d.operatore);
+  fillSelect("filtroSorgente", d.sorgente);
+  fillSelect("filtroTipologia", d.tipologia);
+
+  const rs = await fetch(`${API}/stati`);
+  const ds = await rs.json();
+  statiDisponibili = ds.stati;
+  fillSelect("filtroStato", statiDisponibili);
+}
+
+function fillSelect(id, values) {
+  const el = document.getElementById(id);
+  const current = el.value;
+  el.innerHTML = `<option value="">${el.options[0].textContent}</option>` +
+    values.map(v => `<option value="${escAttr(v)}">${escHtml(v)}</option>`).join("");
+  el.value = current;
+}
+
+function escHtml(s) { return (s ?? "").toString().replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function escAttr(s) { return escHtml(s); }
+function fmtData(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString("it-IT") + " " + d.toLocaleTimeString("it-IT", {hour:"2-digit", minute:"2-digit"});
+}
+
+async function loadLeads() {
+  const params = new URLSearchParams({
+    page: state.page, page_size: state.page_size,
+  });
+  if (state.search) params.set("search", state.search);
+  if (state.tipologia) params.set("tipologia", state.tipologia);
+  if (state.stato) params.set("stato", state.stato);
+  if (state.citta) params.set("citta", state.citta);
+  if (state.operatore) params.set("operatore", state.operatore);
+  if (state.sorgente) params.set("sorgente", state.sorgente);
+
+  const r = await fetch(`${API}/leads?${params}`);
+  const d = await r.json();
+  state.pages = d.pages || 1;
+
+  document.getElementById("totaleRisultati").textContent = `${d.total.toLocaleString("it-IT")} lead trovati`;
+  document.getElementById("pageInfo").textContent = `Pagina ${d.page} di ${d.pages || 1}`;
+
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = d.results.map(l => `
+    <tr class="border-t hover:bg-slate-50 cursor-pointer" onclick="openLead(${l.id})">
+      <td class="px-3 py-2">${escHtml((l.nome||"") + " " + (l.cognome||""))}</td>
+      <td class="px-3 py-2">${escHtml(l.cellulare)}</td>
+      <td class="px-3 py-2">${escHtml(l.email)}</td>
+      <td class="px-3 py-2">${escHtml(l.tipologia)}</td>
+      <td class="px-3 py-2">${escHtml(l.citta)}</td>
+      <td class="px-3 py-2">${escHtml(l.indirizzo)}</td>
+      <td class="px-3 py-2"><span class="stato-badge ${statoClass(l.stato)}">${escHtml(l.stato)}</span></td>
+      <td class="px-3 py-2">${escHtml(l.operatore)}</td>
+      <td class="px-3 py-2 text-slate-500">${fmtData(l.data_creazione)}</td>
+      <td class="px-3 py-2 text-slate-500">${fmtData(l.data_recall)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="10" class="text-center py-8 text-slate-400">Nessun lead trovato</td></tr>`;
+}
+
+let searchTimeout;
+document.getElementById("search").addEventListener("input", (e) => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => { state.search = e.target.value; state.page = 1; loadLeads(); }, 350);
+});
+["filtroTipologia","filtroStato","filtroCitta","filtroOperatore","filtroSorgente"].forEach(id => {
+  document.getElementById(id).addEventListener("change", (e) => {
+    const key = id.replace("filtro","").toLowerCase();
+    state[key] = e.target.value;
+    state.page = 1;
+    loadLeads();
+  });
+});
+document.getElementById("btnReset").addEventListener("click", () => {
+  state = { page: 1, page_size: 50, search: "", tipologia: "", stato: "", citta: "", operatore: "", sorgente: "" };
+  document.getElementById("search").value = "";
+  ["filtroTipologia","filtroStato","filtroCitta","filtroOperatore","filtroSorgente"].forEach(id => document.getElementById(id).value = "");
+  loadLeads();
+});
+document.getElementById("btnPrev").addEventListener("click", () => { if (state.page > 1) { state.page--; loadLeads(); } });
+document.getElementById("btnNext").addEventListener("click", () => { if (state.page < state.pages) { state.page++; loadLeads(); } });
+
+// ---------- Pannello dettaglio ----------
+async function openLead(id) {
+  const r = await fetch(`${API}/leads/${id}`);
+  const l = await r.json();
+  document.getElementById("panelTitle").textContent = `${l.nome||""} ${l.cognome||""}`.trim() || "Lead";
+
+  const statiOptions = statiDisponibili.map(s => `<option value="${escAttr(s)}" ${s===l.stato?"selected":""}>${escHtml(s)}</option>`).join("");
+
+  document.getElementById("panelBody").innerHTML = `
+    <div class="grid grid-cols-2 gap-2">
+      <label class="text-xs text-slate-500 col-span-2">Stato pipeline
+        <select id="f_stato" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5">${statiOptions}</select>
+      </label>
+      <label class="text-xs text-slate-500">Nome<input id="f_nome" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.nome||"")}"></label>
+      <label class="text-xs text-slate-500">Cognome<input id="f_cognome" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.cognome||"")}"></label>
+      <label class="text-xs text-slate-500">Cellulare<input id="f_cellulare" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.cellulare||"")}"></label>
+      <label class="text-xs text-slate-500">Email<input id="f_email" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.email||"")}"></label>
+      <label class="text-xs text-slate-500">Tipologia
+        <select id="f_tipologia" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5">
+          <option value="Buyer" ${l.tipologia==="Buyer"?"selected":""}>Buyer</option>
+          <option value="Seller" ${l.tipologia==="Seller"?"selected":""}>Seller</option>
+        </select>
+      </label>
+      <label class="text-xs text-slate-500">Città<input id="f_citta" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.citta||"")}"></label>
+      <label class="text-xs text-slate-500 col-span-2">Indirizzo<input id="f_indirizzo" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.indirizzo||"")}"></label>
+      <label class="text-xs text-slate-500">Sorgente<input id="f_sorgente" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.sorgente||"")}"></label>
+      <label class="text-xs text-slate-500">Operatore assegnato<input id="f_operatore" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.operatore||"")}"></label>
+      <label class="text-xs text-slate-500 col-span-2">Prossimo recall<input id="f_recall" type="datetime-local" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${l.data_recall ? l.data_recall.slice(0,16) : ""}"></label>
+      <label class="text-xs text-slate-500 col-span-2">Note<textarea id="f_note" rows="3" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5">${escHtml(l.note||"")}</textarea></label>
+    </div>
+    <div class="flex justify-between items-center pt-2">
+      <button id="btnDelete" class="text-rose-600 text-sm hover:underline">Elimina lead</button>
+      <button id="btnSave" class="bg-blue-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-blue-700">Salva</button>
+    </div>
+
+    <div class="pt-4 border-t mt-4">
+      <div class="flex items-center justify-between mb-2">
+        <h4 class="text-sm font-semibold">Appuntamento di acquisizione</h4>
+        ${l.google_calendar_configurato ? '<span class="text-xs text-emerald-600">📅 sincronizzato con Google Calendar</span>' : '<span class="text-xs text-slate-400">Google Calendar non configurato</span>'}
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="text-xs text-slate-500">Inizio<input id="a_inizio" type="datetime-local" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${l.appuntamento_inizio ? l.appuntamento_inizio.slice(0,16) : ""}"></label>
+        <label class="text-xs text-slate-500">Fine<input id="a_fine" type="datetime-local" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${l.appuntamento_fine ? l.appuntamento_fine.slice(0,16) : ""}"></label>
+        <label class="text-xs text-slate-500">Tipologia appuntamento
+          <select id="a_tipologia" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5">
+            <option ${l.tipologia_appuntamento==="Standard"?"selected":""}>Standard</option>
+            <option ${l.tipologia_appuntamento==="Acquisizione"?"selected":""}>Acquisizione</option>
+            <option ${l.tipologia_appuntamento==="Valutazione"?"selected":""}>Valutazione</option>
+            <option ${l.tipologia_appuntamento==="Visita"?"selected":""}>Visita</option>
+          </select>
+        </label>
+        <label class="text-xs text-slate-500">Stato conferma
+          <select id="a_confermato" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5">
+            <option ${l.appuntamento_confermato==="Non confermato" || !l.appuntamento_confermato ?"selected":""}>Non confermato</option>
+            <option ${l.appuntamento_confermato==="Confermato"?"selected":""}>Confermato</option>
+          </select>
+        </label>
+        <label class="text-xs text-slate-500">Referente front-office<input id="a_referente" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.referente_front_office||"")}"></label>
+        <label class="text-xs text-slate-500">ID immobile<input id="a_immobile" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.id_immobile||"")}"></label>
+      </div>
+      <p class="text-xs text-slate-400 mt-1">Indirizzo e telefono dell'evento vengono presi automaticamente dai dati del lead qui sopra.</p>
+      <div class="flex justify-between items-center pt-2">
+        <button id="btnDeleteAppuntamento" class="text-rose-600 text-sm hover:underline">Rimuovi appuntamento</button>
+        <button id="btnSaveAppuntamento" class="bg-emerald-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-emerald-700">Salva e sincronizza</button>
+      </div>
+    </div>
+    <div class="pt-4 border-t mt-4">
+      <h4 class="text-sm font-semibold mb-2">Storico stati</h4>
+      <ul class="text-xs text-slate-500 space-y-1">
+        ${l.storico.map(s => `<li>${fmtData(s.data)} — ${escHtml(s.stato_precedente||"—")} → <b>${escHtml(s.stato_nuovo)}</b> ${s.operatore ? "("+escHtml(s.operatore)+")" : ""}</li>`).join("") || "<li>Nessuna modifica di stato</li>"}
+      </ul>
+    </div>
+  `;
+
+  document.getElementById("btnSave").addEventListener("click", async () => {
+    const payload = {
+      nome: val("f_nome"), cognome: val("f_cognome"), cellulare: val("f_cellulare"), email: val("f_email"),
+      tipologia: val("f_tipologia"), stato: val("f_stato"), citta: val("f_citta"), indirizzo: val("f_indirizzo"),
+      sorgente: val("f_sorgente"), operatore: val("f_operatore"), note: val("f_note"),
+      operatore_modifica: getOperatore() || null,
+    };
+    const recall = val("f_recall");
+    payload.data_recall = recall ? new Date(recall).toISOString() : null;
+
+    await fetch(`${API}/leads/${id}`, {
+      method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload)
+    });
+    closePanel();
+    loadLeads();
+    loadFiltri();
+  });
+
+  document.getElementById("btnDelete").addEventListener("click", async () => {
+    if (!confirm("Eliminare definitivamente questo lead?")) return;
+    await fetch(`${API}/leads/${id}`, { method: "DELETE" });
+    closePanel();
+    loadLeads();
+  });
+
+  document.getElementById("btnSaveAppuntamento").addEventListener("click", async () => {
+    const inizio = val("a_inizio"), fine = val("a_fine");
+    if (!inizio || !fine) { alert("Inserisci data/ora di inizio e fine appuntamento"); return; }
+    const payload = {
+      appuntamento_inizio: new Date(inizio).toISOString(),
+      appuntamento_fine: new Date(fine).toISOString(),
+      tipologia_appuntamento: val("a_tipologia"),
+      appuntamento_confermato: val("a_confermato"),
+      referente_front_office: val("a_referente"),
+      id_immobile: val("a_immobile"),
+      operatore_modifica: getOperatore() || null,
+    };
+    const r = await fetch(`${API}/leads/${id}/appuntamento`, {
+      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (d.calendar_sync_error) {
+      alert("Appuntamento salvato, ma la sincronizzazione con Google Calendar ha dato un errore:\n" + d.calendar_sync_error);
+    }
+    closePanel();
+    loadLeads();
+  });
+
+  document.getElementById("btnDeleteAppuntamento").addEventListener("click", async () => {
+    if (!confirm("Rimuovere l'appuntamento (e l'evento su Google Calendar, se presente)?")) return;
+    await fetch(`${API}/leads/${id}/appuntamento`, { method: "DELETE" });
+    closePanel();
+    loadLeads();
+  });
+
+  document.getElementById("overlay").classList.remove("hidden");
+  document.getElementById("panel").classList.remove("hidden");
+}
+function val(id) { const v = document.getElementById(id).value; return v === "" ? null : v; }
+
+function closePanel() {
+  document.getElementById("overlay").classList.add("hidden");
+  document.getElementById("panel").classList.add("hidden");
+}
+document.getElementById("btnClosePanel").addEventListener("click", closePanel);
+document.getElementById("overlay").addEventListener("click", closePanel);
+
+// ---------- Nuovo lead ----------
+document.getElementById("btnNew").addEventListener("click", async () => {
+  const r = await fetch(`${API}/leads`, {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ stato: "Nuovo", operatore: getOperatore() || null })
+  });
+  const l = await r.json();
+  loadLeads();
+  openLead(l.id);
+});
+
+// ---------- Import CSV ----------
+document.getElementById("btnImport").addEventListener("click", () => document.getElementById("importModal").classList.remove("hidden"));
+document.getElementById("btnCancelImport").addEventListener("click", () => document.getElementById("importModal").classList.add("hidden"));
+document.getElementById("btnDoImport").addEventListener("click", async () => {
+  const fileInput = document.getElementById("csvFile");
+  if (!fileInput.files.length) { alert("Seleziona un file CSV"); return; }
+  const fd = new FormData();
+  fd.append("file", fileInput.files[0]);
+  const aggiorna = document.getElementById("aggiornaEsistenti").checked;
+  document.getElementById("importResult").textContent = "Caricamento in corso...";
+  const r = await fetch(`${API}/import?aggiorna_esistenti=${aggiorna}`, { method: "POST", body: fd });
+  const d = await r.json();
+  document.getElementById("importResult").textContent = `Creati: ${d.creati} — Aggiornati: ${d.aggiornati} — Saltati (duplicati): ${d.saltati}`;
+  loadLeads(); loadFiltri();
+});
+
+// ---------- Statistiche ----------
+document.getElementById("btnStats").addEventListener("click", async () => {
+  const r = await fetch(`${API}/stats`);
+  const d = await r.json();
+  const rows = (obj) => Object.entries(obj).sort((a,b) => b[1]-a[1]).map(([k,v]) => `<div class="flex justify-between py-0.5"><span>${escHtml(k)}</span><b>${v}</b></div>`).join("");
+  document.getElementById("statsBody").innerHTML = `
+    <p class="mb-3 text-slate-600">Totale lead: <b>${d.totale.toLocaleString("it-IT")}</b></p>
+    <h4 class="font-semibold text-xs uppercase text-slate-400 mt-2 mb-1">Per stato pipeline</h4>${rows(d.per_stato)}
+    <h4 class="font-semibold text-xs uppercase text-slate-400 mt-3 mb-1">Per tipologia</h4>${rows(d.per_tipologia)}
+    <h4 class="font-semibold text-xs uppercase text-slate-400 mt-3 mb-1">Per operatore</h4>${rows(d.per_operatore)}
+  `;
+  document.getElementById("statsModal").classList.remove("hidden");
+});
+document.getElementById("btnCloseStats").addEventListener("click", () => document.getElementById("statsModal").classList.add("hidden"));
+
+initOperatore();
+loadFiltri().then(loadLeads);
+</script>
+</body>
+</html>

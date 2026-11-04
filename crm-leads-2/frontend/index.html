@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CRM Lead</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <style>
+  #map { position: relative; z-index: 0; isolation: isolate; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   .stato-badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:12px; font-weight:600; white-space:nowrap; }
 </style>
@@ -25,6 +31,11 @@
     </div>
   </header>
 
+  <div class="flex gap-1 mb-3">
+    <button id="tabLista" class="px-4 py-1.5 text-sm rounded-lg bg-slate-800 text-white">Lista</button>
+    <button id="tabMappa" class="px-4 py-1.5 text-sm rounded-lg bg-white border text-slate-700 hover:bg-slate-100">Mappa</button>
+  </div>
+
   <!-- Filtri -->
   <div class="bg-white rounded-xl shadow-sm p-3 mb-4 flex flex-wrap gap-2 items-center">
     <input id="search" type="text" placeholder="Cerca nome, cognome, telefono, email, città..."
@@ -37,6 +48,7 @@
     <button id="btnReset" class="text-sm text-slate-500 hover:text-slate-800 px-2">Reset</button>
   </div>
 
+  <div id="viewLista">
   <div class="text-sm text-slate-500 mb-2" id="totaleRisultati"></div>
 
   <!-- Tabella -->
@@ -66,6 +78,46 @@
     <div class="flex gap-2">
       <button id="btnPrev" class="border rounded-lg px-3 py-1 hover:bg-slate-100">&larr; Precedente</button>
       <button id="btnNext" class="border rounded-lg px-3 py-1 hover:bg-slate-100">Successiva &rarr;</button>
+    </div>
+  </div>
+  </div><!-- /viewLista -->
+
+  <!-- Vista mappa -->
+  <div id="viewMappa" class="hidden">
+    <div class="bg-white rounded-xl shadow-sm p-3 mb-3 text-sm">
+      <div class="flex flex-wrap items-center gap-2">
+        <span id="geoInfo" class="text-slate-600"></span>
+        <button id="btnGeo" class="bg-slate-800 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700">Geocodifica indirizzi</button>
+        <span id="geoMsg" class="text-slate-500"></span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t">
+        <input id="cercaInd" type="text" placeholder="Cerca un indirizzo (es. Via Roma 10, Firenze)" class="border rounded-lg px-3 py-1.5 flex-1 min-w-[220px]" />
+        <button id="btnCercaInd" class="border rounded-lg px-3 py-1.5 hover:bg-slate-100">Cerca</button>
+        <button id="btnPick" class="border rounded-lg px-3 py-1.5 hover:bg-slate-100">Scegli centro sulla mappa</button>
+        <label class="flex items-center gap-1">Raggio
+          <select id="raggio" class="border rounded-lg px-2 py-1.5">
+            <option value="250">250 m</option>
+            <option value="500" selected>500 m</option>
+            <option value="1000">1 km</option>
+            <option value="2000">2 km</option>
+            <option value="5000">5 km</option>
+          </select>
+        </label>
+        <button id="btnAreaVisibile" class="border rounded-lg px-3 py-1.5 hover:bg-slate-100">Conta area visibile</button>
+        <button id="btnClearArea" class="text-slate-500 hover:text-slate-800 px-2">Cancella zona</button>
+      </div>
+      <div id="mapMsg" class="text-slate-500 mt-2"></div>
+    </div>
+    <div class="flex flex-col lg:flex-row gap-3">
+      <div id="map" class="flex-1 rounded-xl shadow-sm" style="height:68vh; min-height:360px;"></div>
+      <aside id="areaPanel" class="lg:w-72 bg-white rounded-xl shadow-sm p-4 text-sm">
+        <div class="text-slate-500">Scegli un centro sulla mappa (o cerca un indirizzo) per contare i lead nel raggio, oppure usa "Conta area visibile".</div>
+      </aside>
+    </div>
+    <div class="flex gap-4 mt-2 text-xs text-slate-500">
+      <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#2563eb"></span> Buyer (immobile che cercano)</span>
+      <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#ea580c"></span> Seller (immobile da vendere)</span>
+      <span><span class="inline-block w-2.5 h-2.5 rounded-full align-middle" style="background:#64748b"></span> Altro</span>
     </div>
   </div>
 
@@ -220,21 +272,21 @@ async function loadLeads() {
 let searchTimeout;
 document.getElementById("search").addEventListener("input", (e) => {
   clearTimeout(searchTimeout);
-  searchTimeout = setTimeout(() => { state.search = e.target.value; state.page = 1; loadLeads(); }, 350);
+  searchTimeout = setTimeout(() => { state.search = e.target.value; state.page = 1; refresh(true); }, 350);
 });
 ["filtroTipologia","filtroStato","filtroCitta","filtroOperatore","filtroSorgente"].forEach(id => {
   document.getElementById(id).addEventListener("change", (e) => {
     const key = id.replace("filtro","").toLowerCase();
     state[key] = e.target.value;
     state.page = 1;
-    loadLeads();
+    refresh(true);
   });
 });
 document.getElementById("btnReset").addEventListener("click", () => {
   state = { page: 1, page_size: 50, search: "", tipologia: "", stato: "", citta: "", operatore: "", sorgente: "" };
   document.getElementById("search").value = "";
   ["filtroTipologia","filtroStato","filtroCitta","filtroOperatore","filtroSorgente"].forEach(id => document.getElementById(id).value = "");
-  loadLeads();
+  refresh(true);
 });
 document.getElementById("btnPrev").addEventListener("click", () => { if (state.page > 1) { state.page--; loadLeads(); } });
 document.getElementById("btnNext").addEventListener("click", () => { if (state.page < state.pages) { state.page++; loadLeads(); } });
@@ -268,6 +320,11 @@ async function openLead(id) {
       <label class="text-xs text-slate-500">Operatore assegnato<input id="f_operatore" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${escAttr(l.operatore||"")}"></label>
       <label class="text-xs text-slate-500 col-span-2">Prossimo recall<input id="f_recall" type="datetime-local" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5" value="${l.data_recall ? l.data_recall.slice(0,16) : ""}"></label>
       <label class="text-xs text-slate-500 col-span-2">Note<textarea id="f_note" rows="3" class="border rounded-lg px-2 py-1.5 text-sm w-full mt-0.5">${escHtml(l.note||"")}</textarea></label>
+      <div class="col-span-2 border-t pt-2 mt-1 space-y-1">
+        <label class="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" id="f_cons_email" ${l.consenso_email ? "checked" : ""}> Consenso a email di marketing</label>
+        <label class="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" id="f_cons_sms" ${l.consenso_sms ? "checked" : ""}> Consenso a SMS di marketing</label>
+        <p class="text-xs text-slate-400">Spunta solo se il contatto ha dato un consenso esplicito e documentabile.</p>
+      </div>
     </div>
     <div class="flex justify-between items-center pt-2">
       <button id="btnDelete" class="text-rose-600 text-sm hover:underline">Elimina lead</button>
@@ -318,6 +375,8 @@ async function openLead(id) {
       nome: val("f_nome"), cognome: val("f_cognome"), cellulare: val("f_cellulare"), email: val("f_email"),
       tipologia: val("f_tipologia"), stato: val("f_stato"), citta: val("f_citta"), indirizzo: val("f_indirizzo"),
       sorgente: val("f_sorgente"), operatore: val("f_operatore"), note: val("f_note"),
+      consenso_email: document.getElementById("f_cons_email").checked,
+      consenso_sms: document.getElementById("f_cons_sms").checked,
       operatore_modifica: getOperatore() || null,
     };
     const recall = val("f_recall");
@@ -327,7 +386,7 @@ async function openLead(id) {
       method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload)
     });
     closePanel();
-    loadLeads();
+    refresh(false);
     loadFiltri();
   });
 
@@ -335,7 +394,7 @@ async function openLead(id) {
     if (!confirm("Eliminare definitivamente questo lead?")) return;
     await fetch(`${API}/leads/${id}`, { method: "DELETE" });
     closePanel();
-    loadLeads();
+    refresh(false);
   });
 
   document.getElementById("btnSaveAppuntamento").addEventListener("click", async () => {
@@ -421,6 +480,244 @@ document.getElementById("btnStats").addEventListener("click", async () => {
   document.getElementById("statsModal").classList.remove("hidden");
 });
 document.getElementById("btnCloseStats").addEventListener("click", () => document.getElementById("statsModal").classList.add("hidden"));
+
+// ---------- Vista Lista / Mappa ----------
+let view = "lista";
+function refresh(fit) { if (view === "mappa") loadMap(!!fit); else loadLeads(); }
+
+const TAB_ON = "px-4 py-1.5 text-sm rounded-lg bg-slate-800 text-white";
+const TAB_OFF = "px-4 py-1.5 text-sm rounded-lg bg-white border text-slate-700 hover:bg-slate-100";
+function setView(v) {
+  view = v;
+  document.getElementById("viewLista").classList.toggle("hidden", v !== "lista");
+  document.getElementById("viewMappa").classList.toggle("hidden", v !== "mappa");
+  document.getElementById("tabLista").className = v === "lista" ? TAB_ON : TAB_OFF;
+  document.getElementById("tabMappa").className = v === "mappa" ? TAB_ON : TAB_OFF;
+  if (v === "mappa") {
+    initMap();
+    map.invalidateSize();
+    loadGeoStato();
+    loadMap(true);
+  } else {
+    loadLeads();
+  }
+}
+document.getElementById("tabLista").addEventListener("click", () => setView("lista"));
+document.getElementById("tabMappa").addEventListener("click", () => setView("mappa"));
+
+// ---------- Mappa ----------
+let map = null, cluster = null, areaCircle = null, areaState = null;
+let pickMode = false, mapTimer = null, mapReq = 0, geoRunning = false;
+
+function setMapMsg(t) { document.getElementById("mapMsg").textContent = t || ""; }
+function setGeoMsg(t) { document.getElementById("geoMsg").textContent = t || ""; }
+
+function initMap() {
+  if (map) return;
+  map = L.map("map", { preferCanvas: true }).setView([42.5, 12.5], 6);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, attribution: "&copy; OpenStreetMap"
+  }).addTo(map);
+  cluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 45 });
+  map.addLayer(cluster);
+  map.on("moveend", scheduleMapFetch);
+  map.on("click", onMapClick);
+}
+
+function mapFilterParams() {
+  const p = new URLSearchParams();
+  ["search", "tipologia", "stato", "citta", "operatore", "sorgente"].forEach(k => { if (state[k]) p.set(k, state[k]); });
+  return p;
+}
+
+async function loadMap(fit) {
+  if (!map) return;
+  if (fit) {
+    try {
+      const r = await fetch(`${API}/map/extent?${mapFilterParams()}`);
+      const d = await r.json();
+      if (d.count > 0) {
+        map.fitBounds([[d.south, d.west], [d.north, d.east]], { padding: [30, 30], maxZoom: 16, animate: false });
+      }
+    } catch (e) { /* resta la vista corrente */ }
+  }
+  scheduleMapFetch();
+}
+
+function scheduleMapFetch() {
+  clearTimeout(mapTimer);
+  mapTimer = setTimeout(fetchPoints, 300);
+}
+
+function popupHtml(pt) {
+  const indirizzo = [pt.ind, pt.citta && !(pt.ind || "").toLowerCase().includes(pt.citta.toLowerCase()) ? pt.citta : ""].filter(Boolean).join(", ");
+  return `<div class="text-sm"><b>${escHtml(pt.nome || "Senza nome")}</b><br>` +
+    `${escHtml(pt.tip || "")} &mdash; ${escHtml(pt.stato || "")}<br>` +
+    `${escHtml(indirizzo)}${pt.prec === "approx" ? " <i>(posizione approssimata)</i>" : ""}<br>` +
+    `${escHtml(pt.tel || "")}<br>` +
+    `<a href="#" onclick="openLead(${pt.id}); return false;" class="text-blue-600 underline">Apri scheda</a></div>`;
+}
+
+async function fetchPoints() {
+  const req = ++mapReq;
+  const b = map.getBounds();
+  const p = mapFilterParams();
+  p.set("south", b.getSouth()); p.set("west", b.getWest());
+  p.set("north", b.getNorth()); p.set("east", b.getEast());
+  let d;
+  try {
+    const r = await fetch(`${API}/map/leads?${p}`);
+    d = await r.json();
+  } catch (e) { setMapMsg("Impossibile caricare i punti: riprova."); return; }
+  if (req !== mapReq) return; // e' arrivata una richiesta piu' recente
+  cluster.clearLayers();
+  const markers = d.punti.map(pt => {
+    const col = pt.tip === "Buyer" ? "#2563eb" : pt.tip === "Seller" ? "#ea580c" : "#64748b";
+    const m = L.circleMarker([pt.lat, pt.lng], { radius: 6, color: "#ffffff", weight: 1.5, fillColor: col, fillOpacity: 0.9 });
+    m.bindPopup(() => popupHtml(pt));
+    return m;
+  });
+  cluster.addLayers(markers);
+  if (d.totale === 0) {
+    setMapMsg("Nessun lead posizionato in quest'area con i filtri attuali.");
+  } else if (d.mostrati < d.totale) {
+    setMapMsg(`Mostrati ${d.mostrati.toLocaleString("it-IT")} lead su ${d.totale.toLocaleString("it-IT")} in quest'area: ingrandisci o usa i filtri per vederli tutti.`);
+  } else {
+    setMapMsg(`${d.totale.toLocaleString("it-IT")} lead in quest'area.`);
+  }
+}
+
+// ----- Geocoding -----
+async function loadGeoStato() {
+  try {
+    const r = await fetch(`${API}/geocode/stato`);
+    const d = await r.json();
+    const sulla = (d.ok || 0) + (d.approx || 0);
+    let t = `${sulla.toLocaleString("it-IT")} lead sulla mappa su ${d.totale.toLocaleString("it-IT")}`;
+    const extra = [];
+    if (d.da_fare) extra.push(`${d.da_fare.toLocaleString("it-IT")} da posizionare`);
+    if (d.non_trovato) extra.push(`${d.non_trovato.toLocaleString("it-IT")} indirizzi non trovati`);
+    if (d.senza_indirizzo) extra.push(`${d.senza_indirizzo.toLocaleString("it-IT")} senza indirizzo`);
+    if (extra.length) t += " (" + extra.join(", ") + ")";
+    document.getElementById("geoInfo").textContent = t;
+    return d;
+  } catch (e) { return null; }
+}
+
+async function runGeocode() {
+  const btn = document.getElementById("btnGeo");
+  if (geoRunning) { geoRunning = false; setGeoMsg("Mi fermo al termine del gruppo in corso..."); return; }
+  geoRunning = true;
+  btn.textContent = "Ferma geocodifica";
+  setGeoMsg("In corso: tieni aperta questa pagina.");
+  while (geoRunning) {
+    let d;
+    try {
+      const r = await fetch(`${API}/geocode/batch?limit=20`, { method: "POST" });
+      d = await r.json();
+    } catch (e) { setGeoMsg("Errore di rete: riprova tra poco."); break; }
+    if (d.occupato) { setGeoMsg("Un altro operatore sta gia' geocodificando."); break; }
+    await loadGeoStato();
+    scheduleMapFetch();
+    if (d.errore) { setGeoMsg("Servizio di geocodifica non disponibile (" + d.errore + "). Riprova tra qualche minuto."); break; }
+    if (!d.rimanenti) { setGeoMsg("Geocodifica completata."); break; }
+    if (!d.assegnati && !d.chiamate) { setGeoMsg("Nessun avanzamento: riprova piu' tardi."); break; }
+  }
+  geoRunning = false;
+  btn.textContent = "Geocodifica indirizzi";
+}
+document.getElementById("btnGeo").addEventListener("click", runGeocode);
+
+// ----- Zona (cerchio o area visibile) -----
+function raggioM() { return parseInt(document.getElementById("raggio").value, 10); }
+
+function drawArea() {
+  if (areaCircle) { map.removeLayer(areaCircle); areaCircle = null; }
+  if (!areaState) return;
+  areaCircle = L.circle([areaState.lat, areaState.lng], {
+    radius: raggioM(), color: "#0f172a", weight: 2, fillColor: "#0f172a", fillOpacity: 0.07, interactive: false
+  }).addTo(map);
+}
+
+function setAreaCenter(lat, lng) {
+  areaState = { lat, lng };
+  drawArea();
+  map.fitBounds(areaCircle.getBounds(), { padding: [40, 40] });
+  queryArea(false);
+}
+
+function onMapClick(e) {
+  if (!pickMode) return;
+  pickMode = false;
+  map.getContainer().style.cursor = "";
+  setAreaCenter(e.latlng.lat, e.latlng.lng);
+}
+
+async function queryArea(useBounds) {
+  const p = mapFilterParams();
+  let titolo;
+  if (useBounds) {
+    areaState = null; drawArea();
+    const b = map.getBounds();
+    p.set("south", b.getSouth()); p.set("west", b.getWest());
+    p.set("north", b.getNorth()); p.set("east", b.getEast());
+    titolo = "Area visibile sulla mappa";
+  } else {
+    p.set("lat", areaState.lat); p.set("lng", areaState.lng); p.set("raggio_m", raggioM());
+    const r = raggioM();
+    titolo = `Zona di raggio ${r >= 1000 ? (r / 1000) + " km" : r + " m"}`;
+  }
+  const panel = document.getElementById("areaPanel");
+  panel.innerHTML = '<div class="text-slate-500">Conto i lead...</div>';
+  try {
+    const r = await fetch(`${API}/map/area?${p}`);
+    const d = await r.json();
+    const n = (x) => x.toLocaleString("it-IT");
+    panel.innerHTML = `
+      <div class="font-semibold mb-2">${titolo}</div>
+      <div class="text-2xl font-bold mb-1">${n(d.totale)} <span class="text-sm font-normal text-slate-500">lead</span></div>
+      <div class="text-slate-600 mb-3">${n(d.buyer)} buyer, ${n(d.seller)} seller${d.altro ? ", " + n(d.altro) + " altro" : ""}</div>
+      <div class="space-y-1 text-slate-700">
+        <div class="flex justify-between"><span>Con email</span><b>${n(d.con_email)}</b></div>
+        <div class="flex justify-between"><span>&hellip; di cui con consenso</span><b>${n(d.con_email_e_consenso)}</b></div>
+        <div class="flex justify-between"><span>Con cellulare</span><b>${n(d.con_cellulare)}</b></div>
+        <div class="flex justify-between"><span>&hellip; di cui con consenso SMS</span><b>${n(d.con_cellulare_e_consenso)}</b></div>
+      </div>
+      <p class="text-xs text-slate-400 mt-3">I conteggi seguono i filtri in alto. Il consenso si imposta sulla scheda di ogni lead.</p>`;
+  } catch (e) {
+    panel.innerHTML = '<div class="text-rose-600">Errore nel conteggio, riprova.</div>';
+  }
+}
+
+document.getElementById("btnPick").addEventListener("click", () => {
+  pickMode = true;
+  map.getContainer().style.cursor = "crosshair";
+  setMapMsg("Clicca sulla mappa per scegliere il centro della zona.");
+});
+document.getElementById("btnAreaVisibile").addEventListener("click", () => queryArea(true));
+document.getElementById("btnClearArea").addEventListener("click", () => {
+  areaState = null; drawArea();
+  document.getElementById("areaPanel").innerHTML = '<div class="text-slate-500">Scegli un centro sulla mappa (o cerca un indirizzo) per contare i lead nel raggio, oppure usa "Conta area visibile".</div>';
+});
+document.getElementById("raggio").addEventListener("change", () => {
+  if (areaState) { drawArea(); map.fitBounds(areaCircle.getBounds(), { padding: [40, 40] }); queryArea(false); }
+});
+
+async function cercaIndirizzo() {
+  const q = document.getElementById("cercaInd").value.trim();
+  if (q.length < 3) return;
+  setMapMsg("Cerco l'indirizzo...");
+  try {
+    const r = await fetch(`${API}/geocode/cerca?q=${encodeURIComponent(q)}`);
+    if (!r.ok) { setMapMsg(r.status === 404 ? "Indirizzo non trovato: prova a scrivere anche la citta'." : "Servizio di ricerca non disponibile ora."); return; }
+    const d = await r.json();
+    setMapMsg("");
+    setAreaCenter(d.lat, d.lng);
+  } catch (e) { setMapMsg("Errore di rete: riprova."); }
+}
+document.getElementById("btnCercaInd").addEventListener("click", cercaIndirizzo);
+document.getElementById("cercaInd").addEventListener("keydown", (e) => { if (e.key === "Enter") cercaIndirizzo(); });
+
 
 initOperatore();
 loadFiltri().then(loadLeads);

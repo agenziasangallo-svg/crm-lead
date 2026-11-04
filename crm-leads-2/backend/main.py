@@ -1,8 +1,11 @@
 import base64
 import csv
 import io
+import math
 import os
 import secrets
+import threading
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -16,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from models import Lead, StoricoStato, DEFAULT_STATI, init_db, get_db
 import gcal
+import geocoder
 
 app = FastAPI(title="CRM Lead")
 
@@ -104,6 +108,8 @@ class LeadUpdate(BaseModel):
     operatore: Optional[str] = None
     note: Optional[str] = None
     data_recall: Optional[datetime] = None
+    consenso_email: Optional[bool] = None
+    consenso_sms: Optional[bool] = None
     operatore_modifica: Optional[str] = None  # chi fa la modifica (per lo storico)
 
 
@@ -146,7 +152,19 @@ def lead_to_dict(l: Lead):
         "appuntamento_fine": l.appuntamento_fine.isoformat() if l.appuntamento_fine else None,
         "appuntamento_confermato": l.appuntamento_confermato,
         "google_calendar_configurato": gcal.is_configured(),
+        "lat": l.lat,
+        "lng": l.lng,
+        "geo_status": l.geo_status,
+        "consenso_email": bool(l.consenso_email),
+        "consenso_sms": bool(l.consenso_sms),
     }
+
+
+def _reset_geo(lead):
+    """Se l'indirizzo cambia, la vecchia posizione non vale piu': da ricalcolare."""
+    lead.lat = None
+    lead.lng = None
+    lead.geo_status = "da_fare"
 
 
 # ---------- Endpoint ----------
@@ -266,9 +284,12 @@ def update_lead(lead_id: int, payload: LeadUpdate, db: Session = Depends(get_db)
     operatore_modifica = data.pop("operatore_modifica", None)
 
     stato_precedente = lead.stato
+    indirizzo_prima, citta_prima = lead.indirizzo, lead.citta
     for k, v in data.items():
         setattr(lead, k, v)
     lead.ultima_modifica = datetime.utcnow()
+    if (lead.indirizzo, lead.citta) != (indirizzo_prima, citta_prima):
+        _reset_geo(lead)
 
     if "stato" in data and data["stato"] != stato_precedente:
         db.add(StoricoStato(
@@ -451,6 +472,7 @@ async def import_csv(
         data_recall = parse_data_it(norm.get("data_recall"))
 
         if existing:
+            indirizzo_prima, citta_prima = existing.indirizzo, existing.citta
             existing.nome = norm.get("nome") or existing.nome
             existing.cognome = norm.get("cognome") or existing.cognome
             existing.email = email or existing.email
@@ -462,6 +484,8 @@ async def import_csv(
             existing.operatore = norm.get("operatore") or existing.operatore
             existing.data_recall = data_recall or existing.data_recall
             existing.ultima_modifica = datetime.utcnow()
+            if (existing.indirizzo, existing.citta) != (indirizzo_prima, citta_prima):
+                _reset_geo(existing)
             aggiornati += 1
         else:
             lead = Lead(
@@ -484,6 +508,232 @@ async def import_csv(
 
     db.commit()
     return {"creati": creati, "aggiornati": aggiornati, "saltati": saltati}
+
+
+# ---------- Geocoding e mappa ----------
+
+_geo_lock = threading.Lock()
+
+
+def _da_fare():
+    return or_(Lead.geo_status == "da_fare", Lead.geo_status.is_(None))
+
+
+def _stesso_indirizzo(q, ind, cit):
+    q = q.filter(Lead.indirizzo == ind)
+    return q.filter(Lead.citta == cit) if cit is not None else q.filter(Lead.citta.is_(None))
+
+
+def _applica_geo(db: Session, ind, cit, lat, lng, stato):
+    """Assegna la stessa posizione a tutti i lead da geocodificare con lo stesso indirizzo."""
+    n = (
+        _stesso_indirizzo(db.query(Lead), ind, cit)
+        .filter(_da_fare())
+        .update({Lead.lat: lat, Lead.lng: lng, Lead.geo_status: stato}, synchronize_session=False)
+    )
+    db.commit()
+    return n
+
+
+@app.get("/api/geocode/stato")
+def geocode_stato(db: Session = Depends(get_db)):
+    conteggi = {"da_fare": 0, "ok": 0, "approx": 0, "non_trovato": 0, "senza_indirizzo": 0}
+    for stato, n in db.query(Lead.geo_status, func.count(Lead.id)).group_by(Lead.geo_status).all():
+        chiave = stato or "da_fare"
+        conteggi[chiave] = conteggi.get(chiave, 0) + n
+    conteggi["totale"] = sum(conteggi.values())
+    return conteggi
+
+
+@app.post("/api/geocode/batch")
+def geocode_batch(limit: int = Query(20, ge=1, le=60), db: Session = Depends(get_db)):
+    """
+    Geocodifica un gruppo di indirizzi. Si richiama piu' volte (lo fa il pulsante
+    nella mappa) finche' "rimanenti" arriva a 0. Lo stato e' tutto nel database,
+    quindi si puo' fermare e riprendere quando si vuole.
+    Lead con lo stesso indirizzo condividono il risultato: una sola chiamata al servizio.
+    """
+    if not _geo_lock.acquire(blocking=False):
+        return {"occupato": True}
+    try:
+        # lead senza indirizzo: niente da geocodificare, li segno in blocco
+        db.query(Lead).filter(
+            _da_fare(), or_(Lead.indirizzo.is_(None), func.trim(Lead.indirizzo) == "")
+        ).update({Lead.geo_status: "senza_indirizzo"}, synchronize_session=False)
+        db.commit()
+
+        chiamate, assegnati, errore = 0, 0, None
+        t0 = time.time()
+        while chiamate < limit and time.time() - t0 < 60:
+            lead = db.query(Lead).filter(_da_fare()).order_by(Lead.id).first()
+            if not lead:
+                break
+            ind, cit = lead.indirizzo, lead.citta
+
+            # stesso indirizzo gia' posizionato su un altro lead: riuso, senza chiamare il servizio
+            gia = _stesso_indirizzo(db.query(Lead), ind, cit).filter(Lead.lat.isnot(None)).first()
+            if gia:
+                prec = gia.geo_status if gia.geo_status in ("ok", "approx") else "approx"
+                n = _applica_geo(db, ind, cit, gia.lat, gia.lng, prec)
+            else:
+                try:
+                    ris = geocoder.geocode(geocoder.build_query(ind, cit))
+                except geocoder.GeocodeTemporaryError as e:
+                    errore = str(e)
+                    break
+                chiamate += 1
+                if ris:
+                    n = _applica_geo(db, ind, cit, ris[0], ris[1], ris[2])
+                else:
+                    n = _applica_geo(db, ind, cit, None, None, "non_trovato")
+
+            if n == 0:
+                # per sicurezza, evita cicli infiniti
+                lead.geo_status = "non_trovato"
+                db.commit()
+                n = 1
+            assegnati += n
+
+        rimanenti = db.query(func.count(Lead.id)).filter(_da_fare()).scalar()
+        return {"assegnati": assegnati, "chiamate": chiamate, "rimanenti": rimanenti, "errore": errore}
+    finally:
+        _geo_lock.release()
+
+
+@app.get("/api/geocode/cerca")
+def geocode_cerca(q: str = Query(..., min_length=3)):
+    """Trasforma un indirizzo scritto a mano in coordinate (per centrare la mappa)."""
+    testo = q if "ital" in q.lower() else q + ", Italia"
+    try:
+        ris = geocoder.geocode(testo)
+    except geocoder.GeocodeTemporaryError as e:
+        raise HTTPException(503, str(e))
+    if not ris:
+        raise HTTPException(404, "Indirizzo non trovato")
+    return {"lat": ris[0], "lng": ris[1], "precisione": ris[2]}
+
+
+def _filtra(q, search, tipologia, stato, citta, operatore, sorgente):
+    """Stessi filtri della lista, applicati alle query della mappa."""
+    if search:
+        like = f"%{search}%"
+        q = q.filter(or_(
+            Lead.nome.ilike(like), Lead.cognome.ilike(like), Lead.cellulare.ilike(like),
+            Lead.email.ilike(like), Lead.citta.ilike(like), Lead.indirizzo.ilike(like),
+        ))
+    if tipologia:
+        q = q.filter(Lead.tipologia == tipologia)
+    if stato:
+        q = q.filter(Lead.stato == stato)
+    if citta:
+        q = q.filter(Lead.citta.ilike(f"%{citta}%"))
+    if operatore:
+        q = q.filter(Lead.operatore == operatore)
+    if sorgente:
+        q = q.filter(Lead.sorgente == sorgente)
+    return q
+
+
+@app.get("/api/map/extent")
+def map_extent(
+    search: Optional[str] = None, tipologia: Optional[str] = None, stato: Optional[str] = None,
+    citta: Optional[str] = None, operatore: Optional[str] = None, sorgente: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Riquadro che contiene tutti i lead posizionati con i filtri attuali (per fare zoom)."""
+    q = db.query(
+        func.min(Lead.lat), func.max(Lead.lat), func.min(Lead.lng), func.max(Lead.lng), func.count(Lead.id)
+    ).filter(Lead.lat.isnot(None))
+    s, n, w, e, count = _filtra(q, search, tipologia, stato, citta, operatore, sorgente).one()
+    if not count:
+        return {"count": 0}
+    return {"count": count, "south": s, "north": n, "west": w, "east": e}
+
+
+@app.get("/api/map/leads")
+def map_leads(
+    south: float, west: float, north: float, east: float,
+    search: Optional[str] = None, tipologia: Optional[str] = None, stato: Optional[str] = None,
+    citta: Optional[str] = None, operatore: Optional[str] = None, sorgente: Optional[str] = None,
+    limit: int = 6000,
+    db: Session = Depends(get_db),
+):
+    """Punti della mappa dentro il riquadro visibile, con gli stessi filtri della lista."""
+    limit = min(max(limit, 1), 10000)
+    q = db.query(
+        Lead.id, Lead.lat, Lead.lng, Lead.nome, Lead.cognome, Lead.cellulare,
+        Lead.indirizzo, Lead.citta, Lead.tipologia, Lead.stato, Lead.geo_status,
+    ).filter(Lead.lat.isnot(None), Lead.lat.between(south, north), Lead.lng.between(west, east))
+    q = _filtra(q, search, tipologia, stato, citta, operatore, sorgente)
+    totale = q.count()
+    righe = q.limit(limit).all()
+    return {
+        "totale": totale,
+        "mostrati": len(righe),
+        "punti": [
+            {
+                "id": r.id, "lat": r.lat, "lng": r.lng,
+                "nome": f"{r.nome or ''} {r.cognome or ''}".strip(),
+                "tel": r.cellulare, "ind": r.indirizzo, "citta": r.citta,
+                "tip": r.tipologia, "stato": r.stato, "prec": r.geo_status,
+            }
+            for r in righe
+        ],
+    }
+
+
+def _distanza_m(lat1, lng1, lat2, lng2):
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+@app.get("/api/map/area")
+def map_area(
+    lat: Optional[float] = None, lng: Optional[float] = None, raggio_m: Optional[float] = None,
+    south: Optional[float] = None, west: Optional[float] = None,
+    north: Optional[float] = None, east: Optional[float] = None,
+    search: Optional[str] = None, tipologia: Optional[str] = None, stato: Optional[str] = None,
+    citta: Optional[str] = None, operatore: Optional[str] = None, sorgente: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Quanti lead ci sono in una zona (cerchio: lat+lng+raggio_m, oppure riquadro
+    south/west/north/east) e quanti sono raggiungibili via email / SMS con consenso.
+    """
+    cerchio = lat is not None and lng is not None and raggio_m
+    if cerchio:
+        dlat = raggio_m / 111320.0
+        dlng = raggio_m / (111320.0 * max(math.cos(math.radians(lat)), 0.01))
+        s, n, w, e = lat - dlat, lat + dlat, lng - dlng, lng + dlng
+    elif None not in (south, west, north, east):
+        s, n, w, e = south, north, west, east
+    else:
+        raise HTTPException(400, "Indica un cerchio (lat, lng, raggio_m) oppure un riquadro")
+
+    q = db.query(
+        Lead.lat, Lead.lng, Lead.tipologia, Lead.email, Lead.cellulare, Lead.consenso_email, Lead.consenso_sms
+    ).filter(Lead.lat.isnot(None), Lead.lat.between(s, n), Lead.lng.between(w, e))
+    q = _filtra(q, search, tipologia, stato, citta, operatore, sorgente)
+    righe = q.limit(50000).all()
+    if cerchio:
+        righe = [r for r in righe if _distanza_m(lat, lng, r.lat, r.lng) <= raggio_m]
+
+    def pieno(v):
+        return bool(v and str(v).strip())
+
+    return {
+        "totale": len(righe),
+        "buyer": sum(1 for r in righe if r.tipologia == "Buyer"),
+        "seller": sum(1 for r in righe if r.tipologia == "Seller"),
+        "altro": sum(1 for r in righe if r.tipologia not in ("Buyer", "Seller")),
+        "con_email": sum(1 for r in righe if pieno(r.email)),
+        "con_email_e_consenso": sum(1 for r in righe if pieno(r.email) and r.consenso_email),
+        "con_cellulare": sum(1 for r in righe if pieno(r.cellulare)),
+        "con_cellulare_e_consenso": sum(1 for r in righe if pieno(r.cellulare) and r.consenso_sms),
+    }
 
 
 # ---------- Frontend (unico file HTML, nessun asset separato) ----------

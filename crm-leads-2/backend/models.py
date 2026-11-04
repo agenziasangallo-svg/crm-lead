@@ -2,7 +2,8 @@ import os
 from datetime import datetime
 
 from sqlalchemy import (
-    create_engine, Column, Integer, String, DateTime, Text, ForeignKey, Index
+    create_engine, Column, Integer, String, DateTime, Text, ForeignKey, Index,
+    Float, Boolean, text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
@@ -63,6 +64,18 @@ class Lead(Base):
     appuntamento_confermato = Column(String(32), nullable=True, default="Non confermato")
     google_event_id = Column(String(256), nullable=True)
 
+    # Posizione sulla mappa (calcolata dal geocoding dell'indirizzo).
+    # geo_status: da_fare | ok (civico trovato) | approx (solo via/zona)
+    #             | non_trovato | senza_indirizzo
+    lat = Column(Float, nullable=True)
+    lng = Column(Float, nullable=True)
+    geo_status = Column(String(32), nullable=True, default="da_fare", server_default="da_fare")
+
+    # Consensi al marketing: partono sempre a False, vanno spuntati a mano
+    # solo quando il contatto ha dato un consenso esplicito.
+    consenso_email = Column(Boolean, nullable=True, default=False, server_default=text("false"))
+    consenso_sms = Column(Boolean, nullable=True, default=False, server_default=text("false"))
+
     storico = relationship("StoricoStato", back_populates="lead", cascade="all, delete-orphan")
 
 
@@ -81,6 +94,9 @@ class StoricoStato(Base):
 
 
 Index("ix_leads_cellulare_email", Lead.cellulare, Lead.email)
+# Gli indici sulle coordinate esistono gia' nel database (creati a mano su Neon)
+Index("idx_leads_geo", Lead.lat, Lead.lng)
+Index("idx_leads_geo_status", Lead.geo_status)
 
 
 def init_db():

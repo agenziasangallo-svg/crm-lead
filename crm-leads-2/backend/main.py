@@ -1,6 +1,7 @@
 import base64
 import csv
 import io
+import json
 import math
 import os
 import secrets
@@ -8,6 +9,8 @@ import threading
 import time
 from datetime import datetime
 from typing import Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as URLRequest, urlopen
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -90,7 +93,47 @@ if AUTH_USERS:
 
 @app.get("/api/me")
 def me(request: Request):
-    return {"operatore": getattr(request.state, "operatore", None)}
+    operatore = getattr(request.state, "operatore", None)
+    return {"operatore": operatore, "brevo_test": operatore == "giacomo"}
+
+
+@app.post("/api/brevo/test")
+def send_brevo_test(request: Request):
+    if getattr(request.state, "operatore", None) != "giacomo":
+        raise HTTPException(403, "Invio di prova riservato all'utente giacomo.")
+    if request.headers.get("X-CRM-Brevo-Test") != "1":
+        raise HTTPException(400, "Richiesta di prova non valida.")
+
+    api_key = os.environ.get("BREVO_API_KEY", "").strip()
+    recipient = os.environ.get("BREVO_TEST_RECIPIENT", "").strip()
+    if not api_key or not recipient:
+        raise HTTPException(503, "Imposta BREVO_API_KEY e BREVO_TEST_RECIPIENT su Render.")
+
+    payload = {
+        "sender": {"name": "Affittinet.it", "email": "info@affittinet.it"},
+        "to": [{"email": recipient}],
+        "subject": "Affittinet.it | Prova di collegamento CRM",
+        "textContent": "Questo messaggio verifica il collegamento tra il CRM e Brevo.",
+    }
+    outgoing = URLRequest(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    outgoing.add_unredirected_header("api-key", api_key)
+    try:
+        with urlopen(outgoing, timeout=10) as response:
+            if response.status != 201:
+                raise HTTPException(502, "Esito incerto. Controlla i log di Brevo prima di riprovare.")
+    except HTTPError as error:
+        if error.code in (401, 403):
+            raise HTTPException(502, "Brevo ha rifiutato la chiave. Verifica i permessi per l'invio transazionale.") from None
+        raise HTTPException(502, f"Brevo ha risposto con errore {error.code}. Controlla i log di Brevo.") from None
+    except (URLError, TimeoutError):
+        raise HTTPException(502, "Esito incerto. Controlla i log di Brevo prima di riprovare.") from None
+
+    return {"destinatario": recipient}
 
 
 # ---------- Schemi ----------

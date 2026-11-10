@@ -25,6 +25,7 @@
     <div class="flex items-center gap-2">
       <input id="operatoreInput" type="text" placeholder="Il tuo nome (operatore)"
         class="border rounded-lg px-3 py-1.5 text-sm" />
+      <button id="btnBrevoTest" type="button" class="hidden border bg-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-50">Test Brevo</button>
       <button id="btnStats" class="bg-slate-800 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-700">Statistiche</button>
       <button id="btnImport" class="bg-emerald-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-emerald-700">Importa CSV</button>
       <button id="btnNew" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-blue-700">+ Nuovo lead</button>
@@ -195,6 +196,7 @@ async function initOperatore() {
   try {
     const r = await fetch(`${API}/me`);
     const d = await r.json();
+    document.getElementById("btnBrevoTest").classList.toggle("hidden", !d.brevo_test);
     if (d.operatore) {
       document.getElementById("operatoreInput").value = d.operatore;
       localStorage.setItem("crm_operatore", d.operatore);
@@ -203,6 +205,27 @@ async function initOperatore() {
     }
   } catch (e) { /* ignora, campo resta libero */ }
 }
+
+document.getElementById("btnBrevoTest").addEventListener("click", async (event) => {
+  if (!confirm("Inviare una sola email di prova da info@affittinet.it alla casella configurata su Render?")) return;
+
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const r = await fetch(`${API}/brevo/test`, {
+      method: "POST",
+      headers: {"X-CRM-Brevo-Test": "1"},
+    });
+    const d = await r.json();
+    alert(r.ok
+      ? `Brevo ha accettato l'invio a ${d.destinatario}. Controlla la posta in arrivo e lo spam.`
+      : d.detail || "Invio di prova non riuscito.");
+  } catch (e) {
+    alert("Esito incerto. Controlla i log di Brevo prima di riprovare.");
+  } finally {
+    button.disabled = false;
+  }
+});
 
 async function loadFiltri() {
   const r = await fetch(`${API}/filtri`);

@@ -8,7 +8,7 @@ import secrets
 import threading
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
 
@@ -97,8 +97,47 @@ def me(request: Request):
     return {"operatore": operatore, "brevo_test": operatore == "giacomo"}
 
 
+AFFITTINET_ESTIMATE_URL = "https://affittinet-stima-firenze.richiestetoscana.chatgpt.site"
+BREVO_TEST_MESSAGES = {
+    "connessione": (
+        "Affittinet.it | Prova di collegamento CRM",
+        "Questo messaggio verifica il collegamento tra il CRM e Brevo.",
+    ),
+    "stima": (
+        "[PROVA] Quanto puoi chiedere per il tuo appartamento a Firenze?",
+        "Buongiorno,\n\n"
+        "Stai pensando di affittare casa a Firenze? Indicaci il quartiere, la metratura "
+        "e il numero di camere. Un agente Affittinet ti aiuterà a stimare il canone.\n\n"
+        f"Richiedi una prima stima\n{AFFITTINET_ESTIMATE_URL}\n\n"
+        "Il team Affittinet.it",
+    ),
+    "confronto": (
+        "[PROVA] A Firenze conviene affittare intero o a stanze?",
+        "Buongiorno,\n\n"
+        "Prendiamo un appartamento con tre camere in zona San Marco. "
+        "Per confrontare le due formule, un agente valuta quanto potresti incassare in un anno "
+        "affittando l’intero appartamento oppure le singole stanze. In entrambi i casi tiene conto "
+        "delle spese a tuo carico e dei periodi in cui l’appartamento o una stanza potrebbero restare vuoti.\n\n"
+        f"Descrivi il tuo appartamento per fare il confronto\n{AFFITTINET_ESTIMATE_URL}\n\n"
+        "Il team Affittinet.it",
+    ),
+    "telefonata": (
+        "[PROVA] Facciamo due conti sulla tua casa a Firenze?",
+        "Buongiorno,\n\n"
+        "Se stai ancora valutando come affittare il tuo appartamento, "
+        "parla con un agente Affittinet. In una breve telefonata potrai confrontarti "
+        "sul canone, sulla disponibilità della casa e su come gestire l’affitto.\n\n"
+        "Rispondi a questa email con il giorno e l’orario che preferisci.\n\n"
+        "Il team Affittinet.it",
+    ),
+}
+
+
 @app.post("/api/brevo/test")
-def send_brevo_test(request: Request):
+def send_brevo_test(
+    request: Request,
+    messaggio: Literal["connessione", "stima", "confronto", "telefonata"] = "connessione",
+):
     if getattr(request.state, "operatore", None) != "giacomo":
         raise HTTPException(403, "Invio di prova riservato all'utente giacomo.")
     if request.headers.get("X-CRM-Brevo-Test") != "1":
@@ -109,11 +148,12 @@ def send_brevo_test(request: Request):
     if not api_key or not recipient:
         raise HTTPException(503, "Imposta BREVO_API_KEY e BREVO_TEST_RECIPIENT su Render.")
 
+    subject, content = BREVO_TEST_MESSAGES[messaggio]
     payload = {
         "sender": {"name": "Affittinet.it", "email": "info@affittinet.it"},
         "to": [{"email": recipient}],
-        "subject": "Affittinet.it | Prova di collegamento CRM",
-        "textContent": "Questo messaggio verifica il collegamento tra il CRM e Brevo.",
+        "subject": subject,
+        "textContent": content,
     }
     outgoing = URLRequest(
         "https://api.brevo.com/v3/smtp/email",

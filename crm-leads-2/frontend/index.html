@@ -20,12 +20,20 @@
 
 <div class="max-w-[1400px] mx-auto p-4">
 
-  <header class="flex items-center justify-between mb-4">
+  <header class="flex flex-wrap items-center justify-between gap-2 mb-4">
     <h1 class="text-2xl font-bold text-slate-900">CRM Lead</h1>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <input id="operatoreInput" type="text" placeholder="Il tuo nome (operatore)"
         class="border rounded-lg px-3 py-1.5 text-sm" />
-      <button id="btnBrevoTest" type="button" class="hidden border bg-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-50">Test Brevo</button>
+      <div id="brevoTestControls" class="hidden flex items-center gap-1">
+        <select id="brevoTestMessage" aria-label="Email da provare" class="border bg-white rounded-lg text-sm px-2 py-1.5">
+          <option value="connessione">Collegamento</option>
+          <option value="stima">1. Stima del canone</option>
+          <option value="confronto">2. Intero o a stanze</option>
+          <option value="telefonata">3. Invito a sentirsi</option>
+        </select>
+        <button id="btnBrevoTest" type="button" class="border bg-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-100 disabled:opacity-50">Test Brevo</button>
+      </div>
       <button id="btnStats" class="bg-slate-800 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-700">Statistiche</button>
       <button id="btnImport" class="bg-emerald-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-emerald-700">Importa CSV</button>
       <button id="btnNew" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-blue-700">+ Nuovo lead</button>
@@ -196,7 +204,7 @@ async function initOperatore() {
   try {
     const r = await fetch(`${API}/me`);
     const d = await r.json();
-    document.getElementById("btnBrevoTest").classList.toggle("hidden", !d.brevo_test);
+    document.getElementById("brevoTestControls").classList.toggle("hidden", !d.brevo_test);
     if (d.operatore) {
       document.getElementById("operatoreInput").value = d.operatore;
       localStorage.setItem("crm_operatore", d.operatore);
@@ -212,7 +220,8 @@ document.getElementById("btnBrevoTest").addEventListener("click", async (event) 
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    const r = await fetch(`${API}/brevo/test`, {
+    const message = document.getElementById("brevoTestMessage").value;
+    const r = await fetch(`${API}/brevo/test?messaggio=${encodeURIComponent(message)}`, {
       method: "POST",
       headers: {"X-CRM-Brevo-Test": "1"},
     });
